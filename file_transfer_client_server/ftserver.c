@@ -8,6 +8,7 @@ chatsclient.c serves as the client in the client_name-server message application
 '''
 References:
 http://beej.us/guide/bgnet/
+https://stackoverflow.com/questions/16010622/reasoning-behind-c-sockets-sockaddr-and-sockaddr-storage
 this is my CS344 project on sockets: https://github.com/gdavge2003/operating-systems-projects/tree/master/encryptor-decryptor
 '''
 */
@@ -27,32 +28,35 @@ this is my CS344 project on sockets: https://github.com/gdavge2003/operating-sys
 
 #define MAX_MSG_LENGTH	500
 
-// method returns an addrinfo which has information on the server to connect to
-struct addrinfo* createAddress(char* address, char* port) {
+
+//// This section contains struct addrinfo and methods to establish an initial connection
+// method returns an addrinfo which has information for this server, which socket will use later
+struct addrinfo* createAddress(char* port) {
 
     struct addrinfo hints;
     struct addrinfo *servinfo;
     int addr_status;
 
     // setup information on type of connection (TCP)
-    memset(&hints, 0, sizeof hints);
+    memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
 
     // check to make sure it's successful
-    if((addr_status = getaddrinfo(address, port, &hints, &servinfo)) != 0) {
-        fprintf(stderr, "Error setting up server info.\ngetaddrinfo error: %s\n", gai_strerror(addr_status));
+    if ((addr_status = getaddrinfo(NULL, port, &hints, &servinfo)) != 0) {
+        fprintf(stderr, "Error setting up server info.\n"
+                        "Server setup error: %s\n", gai_strerror(addr_status));
         exit(1);
     }
 
     return servinfo;
 }
 
-// method sets up the socket on the client side AFTER server information is setup in struct addrinfo
-int setupSocket(struct addrinfo* servinfo) {
+// create socket for given addr info
+int createSocket(struct addrinfo* servinfo) {
 
     int sockfd;
-    int connect_status;
 
     // setup socket descriptor with server info and error check
     if ((sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol)) == -1) {
@@ -60,120 +64,129 @@ int setupSocket(struct addrinfo* servinfo) {
         exit(1);
     }
 
-    // connect socket and error check
-    if ((connect_status = connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) == -1) {
-        fprintf(stderr, "Error connecting socket to server socket.\n");
-        exit(1);
-    }
-
     return sockfd;
 }
 
-// takes in client socket, input user handle and empty serverName array (which gets what server sends)
-void session(int sockfd, char * userHandle, char * serverName) {
+// bind functioning socket to given port on server
+void bindSocket(int sockfd, struct addrinfo* servinfo) {
 
-    // initial communication with server to share handles
-    // note: chatserver.py should be programmed in acknowledging client sends first, then sends it's own handle!!
-    int sendingcode = send(sockfd, userHandle, strlen(userHandle), 0);
-    int receivingcode = recv(sockfd, serverName, 10, 0);
-
-    // make sure initials are successful
-    if (sendingcode == -1) {
-        fprintf(stderr, "Error in sending handle to server.\n");
+    if (bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
+        close(sockfd);
+        fprintf(stderr, "Error binding socket to given port on this server.\n");
         exit(1);
     }
-    if (receivingcode == -1) {
-        fprintf(stderr, "Error in receieving handle from server.\n");
+}
+
+// set established socket on server to begin listening for connections
+void listenSocket(int sockfd) {
+
+    if (listen(sockfd, 5) == -1) {
+        close(sockfd);
+        fprintf(stderr, "Error established socket unable to listen.\n");
         exit(1);
     }
-
-    printf("Server name received: %s.\nBegin chatting session:\n\n", serverName);
-
-    // setup buffers for both messages - up to MAX_MSG_LENGTH chars/msg allowed
-    char sendMsg[MAX_MSG_LENGTH];
-    char receiveMsg[MAX_MSG_LENGTH];
-    memset(sendMsg, 0 ,sizeof(sendMsg));
-    memset(receiveMsg, 0, sizeof(receiveMsg));
-
-    // error tracking for sent and received messages
-    int status;
-    int byte = 0;
-
-    // 1st user message sent
-    fgets(sendMsg, MAX_MSG_LENGTH, stdin);
-
-    while(1) {
-        // client sends first message
-        printf("%s> ", userHandle);
-        fgets(sendMsg, MAX_MSG_LENGTH, stdin);
-
-        // if user types in quit, then break out of this loop and leads to closed connection
-        if (strcmp(sendMsg, "\\quit\n") == 0) {
-            byte = send(sockfd, sendMsg, strlen(sendMsg), 0);
-            if (byte == -1) {
-                fprintf(stderr, "Error in sending message to server.\n");
-                exit(1);
-            }
-
-            break;
-        }
-
-        // send and check byte count to make sure bytes sent is correct
-        byte = send(sockfd, sendMsg, strlen(sendMsg), 0);
-        if (byte == -1) {
-            fprintf(stderr, "Error in sending message to server.\n");
-            exit(1);
-        }
-
-        // receive and check for receiving errors
-        status = recv(sockfd, receiveMsg, 500, 0);
-        if (status == -1) {
-            fprintf(stderr, "Error in receieving message from server.\n");
-            exit(1);
-        }
-        else if (status == 0) {
-            printf("Program ended by server.\n");
-            break;
-        }
-        else {
-            printf("%s> %s\n", serverName, receiveMsg);
-        }
-
-        // clear char buffer for next set of messages
-        memset(sendMsg, 0, sizeof(sendMsg));
-        memset(receiveMsg, 0, sizeof(receiveMsg));
-    }
-
-    // close connection
-    close(sockfd);
-    printf("Connection closed.\n");
 }
 
 
-// Main
+//// This section contains struct addrinfo and methods for ongoing file transfer sessions
+
+// establish connection with client to send data
+void connectSocket(int sockfd, struct addrinfo* servinfo) {
+
+    int connect_status;
+
+    // connect socket and error check
+    if ((connect_status = connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) == -1) {
+        fprintf(stderr, "Error connecting socket to server port.\n");
+        exit(1);
+    }
+}
+
+
+// handles client-server interactions using helper methods
+void interactWithClient(int client_fd) {
+
+    // setup strings for storage
+    char data_port[50];
+
+    memset(data_port, 0, sizeof(data_port));
+    recv(client_fd, data_port, sizeof(data_port)-1, 0);
+
+    printf("%s\n\n", data_port);
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+}
+
+// takes in client socket, input user handle and empty serverName array (which gets what server sends)
+void session(int sockfd) {
+
+    printf("Server established. Now accepting incoming connections...\n");
+
+    // setup variables to store incoming connection data
+    struct sockaddr_storage client_addr;
+    socklen_t addr_size;
+    int incoming_fd;
+
+
+    while (1) {
+        addr_size = sizeof(client_addr);
+
+        if ((incoming_fd = accept(sockfd, (struct sockaddr*)&client_addr, &addr_size)) == -1) {
+            fprintf(stderr, "Error establishing connection with incoming request.\n"
+                            "Resuming listening...\n");
+            continue;
+        }
+
+        // connection successful - use incoming_fd to interact with client
+        interactWithClient(incoming_fd);
+
+        // close connection with client once interaction is finished; loop to accept more incoming
+        close(incoming_fd);
+        printf("Connection with client closed.\n");
+    }
+}
+
+
+//// Main
 int main(int argc, char *argv[]) {
 
-    // check for proper arguments. must be [hostname] [port_num]
-    if(argc != 3){
-        fprintf(stderr, "Improper usage. Please follow format: './this_app hostname server_port_number' (ie: [1024, 65535]).\n");
+    // check for proper arguments. must be [port_num]
+    if (argc != 2){
+        fprintf(stderr, "Improper usage. Please do: 'file_transfer_client_server <PORT_NUM>'\n");
         exit(1);
     }
 
-    char userHandle[10];
-    char serverName[10];
+    // setup struct addrinfo with server info given user-input port
+    struct addrinfo* servinfo = createAddress(argv[1]);
 
-    // setup client user handle
-    printf("Enter a userHandle that is 10 characters or less. ");
-    scanf("%s", userHandle);
-
-    // setup struct addrinfo with server info
-    struct addrinfo* servinfo = createAddress(argv[1], argv[2]);
-
-    // setup client-side socket and connect to server
-    int sockfd = setupSocket(servinfo);
+    // create, establish, and set socket on port number to be ready to listen for connections
+    int sockfd = createSocket(servinfo);
+    bindSocket(sockfd, servinfo);
+    listenSocket(sockfd);
 
     // connected - session begins until otherwise closed
-    session(sockfd, userHandle, serverName);
+    session(sockfd);
 
     // clean up
     freeaddrinfo(servinfo);

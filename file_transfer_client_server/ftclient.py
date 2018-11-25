@@ -24,39 +24,25 @@ import sys
 from socket import *
 import signal
 
-USER_HANDLE = "SERVER"
+
+# global variables
+FLIP_SERVERS = ["flip1", "flip2", "flip3"]
+HOST_ADDRESS = ".engr.oregonstate.edu"
+
+
+# setup socket and connect to server
+def connect_to_server(server, port):
+    c_socket = socket(AF_INET, SOCK_STREAM)
+    c_socket.connect((server, port))
+
+    return c_socket
 
 # primary method to handle session
-def session(connection):
+def session(client_socket, command, data_port, filename):
 
-    # initial receiving and sending of user_handles
-    client_name = connection.recv(1024) # receive client name
-    print "Client name received: " + client_name
-    connection.send(USER_HANDLE) # send server name
-    print "Sent server name.\nBegin chatting session:\n"
-    
-    # ongoing client-server chat; only broken by /quit
-    while 1:
-        # open to receive from client
-        receive = connection.recv(501)[0:-1]
-        # terminate connection if user quits
-        if receive == "\quit":
-            print "Connection closed.\n"
-            break
+    client_socket.send(data_port)
 
-        print "{}> {}".format(client_name, receive)
-
-        # sending message to client 
-        send = ""
-        while len(send) == 0 or len(send) > 500:
-            send = raw_input("{}> ".format(USER_HANDLE))
-            
-        if send == "\quit":
-            print "Connection closed.\n"
-            connection.send("Server has quit the session.")
-            break
-        else:
-            connection.send(send)
+    client_socket.close()
 
 
 # method to handle ctrl+c gracefully. close the connection and exits the program
@@ -67,34 +53,59 @@ def signal_handler(signal, frame):
 
 # python script execution begins here (ie: main)
 if __name__ == "__main__":
+
     # gracefully allows sigint exit
     signal.signal(signal.SIGINT, signal_handler)
 
-    # setup desired port number to use
-    if len(sys.argv) == 2:            
-        port_number = sys.argv[1]
-    else:
-        print "Improper usage. Please follow format: 'python chatserver.py port_number' (ie: [1024, 65535]).\n" 
+    # check correct arguments
+    # program <SERVER_HOST>, <SERVER_PORT>, <COMMAND>, <FILENAME>, <DATA_PORT>
+    if len(sys.argv) < 5 or len(sys.argv) > 6:
+        print "Incorrect arguments. Please use either of the following:\n" \
+            "1) python ftclient.py [flip server] [server port] [command: -l] [data port]\n" \
+            "2) python ftclient.py [flip server] [server port] [command: -g] [file name] [data port]\n"
         exit(1)
-    port_number = sys.argv[1]
-    
-    # setup socket type on port, then begin listening for requests
-    server_socket = socket(AF_INET, SOCK_STREAM)    
-    # '' - specifies that the socket is reachable by any address the machine happens to have     
-    server_socket.bind(('', int(port_number)))
-    server_socket.listen(1)
-    
-    # confirmation at this point
-    print "Server is now listening for incoming connections.\n"
 
-    # program will be kept alive indefinitely until SIGINT
-    # if client cuts off connection, close connection but continue to listen
-    while 1:
-        # connection is the socket object, addr_tuple is a tuple of address and port of client
-        connection, addr_tuple = server_socket.accept()
-        print "Connected to: {}".format(addr_tuple)
+    # validate correct server host
+    flip_server = argv[1]
+    if flip_server not in FLIP_SERVERS:
+        print "Invalid server, please only just use flip hostname.\n"
+        exit(1)
+    flip_server = flip_server + HOST_ADDRESS
 
-        # manages the current client-server session until closed by sigint.
-        session(connection)
-        connection.close()
+    # validate server port type and range
+    server_port = argv[2]
+    if not (1024 <= int(server_port) <= 65535):
+        print "Invalid server port value. Valid range: [1024, 65535].\n"
+        exit(1)
+
+    # validate command
+    command = argv[3]
+    if command != "-g" and command != "-l":
+        print "Invalid command. Please use '-l' or -'g'.\n"
+        exit(1)
+
+    # validate filename and data port
+    filename, data_port = None, None
+    if command == "-l" and len(sys.argv) == 5:
+        data_port = argv[4]
+    elif command == "-g" and len(sys.argv) == 6:
+        filename = argv[4]
+        data_port = argv[5]
+    else:
+        print "Invalid command/argument combination.\n" \
+              "Please use '-l [data port]' OR '-g [file name] [data port]'.\n"
+        exit(1)
+
+    # validate data port
+    if not (1024 <= int(data_port) <= 65535) or int(data_port) == int(server_port):
+        print "Invalid data port value, or data and server ports are assigned to the same. " \
+                "Valid range: [1024, 65535].\n"
+        exit(1)
+
+    # establish connection to server
+    client_socket = connect_to_server(flip_server, server_port)
+
+    # interaction handling once connection is established
+    session(client_socket, command, data_port, filename)
+
 
