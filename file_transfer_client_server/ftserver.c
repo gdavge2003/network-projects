@@ -273,7 +273,7 @@ void session(int sockfd) {
         // close connection with client once interaction is finished; loop to accept more incoming
         close(incoming_fd);
         printf("Connection with client closed.\n");
-        printf("Continueing to accept incoming connections...\n");
+        printf("Continuing to accept incoming connections...\n");
     }
 }
 
