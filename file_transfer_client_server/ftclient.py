@@ -17,6 +17,7 @@ References:
 https://docs.python.org/2/howto/sockets.html
 https://docs.python.org/2/library/socket.html
 https://stackoverflow.com/questions/6990474/how-can-i-override-the-keyboard-interrupt-python
+https://stackoverflow.com/questions/166506/finding-local-ip-addresses-using-pythons-stdlib
 Heavily reuses code from Project 1
 '''
 
@@ -33,15 +34,69 @@ HOST_ADDRESS = ".engr.oregonstate.edu"
 # setup socket and connect to server
 def connect_to_server(server, port):
     c_socket = socket(AF_INET, SOCK_STREAM)
-    c_socket.connect((server, port))
+    c_socket.connect((server, int(port)))
 
+    print 'Connected to server successfully.\n'
     return c_socket
+
+# setup data socket for data transmission
+def connect_data_socket(port):
+    s_socket = socket(AF_INET, SOCK_STREAM)
+    s_socket.bind(('', int(port)))
+    s_socket.listen(1)
+    d_socket, addr = s_socket.accept()
+
+    return d_socket
+
+# get source address to send to server (see reference)
+def get_source_address():
+    source = socket(AF_INET, SOCK_DGRAM)  # Easy way to get IP address
+    source.connect(("8.8.8.8", 80))
+    address = source.getsockname()[0]
+    source.close()
+    return address
 
 # primary method to handle session
 def session(client_socket, command, data_port, filename):
 
-    client_socket.send(data_port)
+    # send command to server
+    client_socket.send(command)
+    if int(client_socket.recv(5)) == -1:
+        print "Server returned error for command. Check command and send again.\n"
+        exit(1)
 
+    # send data port to server
+    client_socket.send(data_port)
+    if int(client_socket.recv(5)) == -1:
+        print "Server returned error for data port. Check data port and send again.\n"
+        exit(1)
+
+    # send source address to server (in order to establish data connection later
+    client_socket.send(get_source_address())
+    if int(client_socket.recv(5)) == -1:
+        print "Server returned error for client addr. Check code if valid addr and send again.\n"
+        exit(1)
+
+    # send file name if -g
+    if command == "-g":
+        client_socket.send(filename)
+        if int(client_socket.recv(5)) == -1:
+            print "Server returned error for file name. Check file name and send again.\n"
+            exit(1)
+
+    # at this point: command and data passed in. based on -l or -g, be prepared to get results accordingly
+    # setup parallel socket on data port for data transmission
+    data_socket = connect_data_socket(data_port)
+
+    # depending on command, use appropriate way to retrieve data
+    if command == "-l":
+        filename = data_socket.recv(500)
+        print filename
+
+
+
+
+    data_socket.close()
     client_socket.close()
 
 
@@ -66,20 +121,20 @@ if __name__ == "__main__":
         exit(1)
 
     # validate correct server host
-    flip_server = argv[1]
+    flip_server = sys.argv[1]
     if flip_server not in FLIP_SERVERS:
         print "Invalid server, please only just use flip hostname.\n"
         exit(1)
     flip_server = flip_server + HOST_ADDRESS
 
     # validate server port type and range
-    server_port = argv[2]
+    server_port = sys.argv[2]
     if not (1024 <= int(server_port) <= 65535):
         print "Invalid server port value. Valid range: [1024, 65535].\n"
         exit(1)
 
     # validate command
-    command = argv[3]
+    command = sys.argv[3]
     if command != "-g" and command != "-l":
         print "Invalid command. Please use '-l' or -'g'.\n"
         exit(1)
@@ -87,10 +142,10 @@ if __name__ == "__main__":
     # validate filename and data port
     filename, data_port = None, None
     if command == "-l" and len(sys.argv) == 5:
-        data_port = argv[4]
+        data_port = sys.argv[4]
     elif command == "-g" and len(sys.argv) == 6:
-        filename = argv[4]
-        data_port = argv[5]
+        filename = sys.argv[4]
+        data_port = sys.argv[5]
     else:
         print "Invalid command/argument combination.\n" \
               "Please use '-l [data port]' OR '-g [file name] [data port]'.\n"

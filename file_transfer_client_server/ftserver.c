@@ -1,14 +1,16 @@
 /**'''
 Linge Ge
-CS372 Fall 2018 - Project 1: client_name-server message application
+CS372 Fall 2018 - Project 2: server side of file transfer application
 '''
 '''
-chatsclient.c serves as the client in the client_name-server message application.
+ftserver.c serves as the server in the client-server file transfer application.
 '''
 '''
 References:
 http://beej.us/guide/bgnet/
 https://stackoverflow.com/questions/16010622/reasoning-behind-c-sockets-sockaddr-and-sockaddr-storage
+https://www.geeksforgeeks.org/c-program-list-files-sub-directories-directory/
+https://stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
 this is my CS344 project on sockets: https://github.com/gdavge2003/operating-systems-projects/tree/master/encryptor-decryptor
 '''
 */
@@ -25,6 +27,8 @@ this is my CS344 project on sockets: https://github.com/gdavge2003/operating-sys
 #include <errno.h>
 #include <zconf.h>
 #include <fcntl.h>
+#include <unistd.h>
+#include <dirent.h>
 
 #define MAX_MSG_LENGTH	500
 
@@ -38,7 +42,7 @@ struct addrinfo* createAddress(char* port) {
     int addr_status;
 
     // setup information on type of connection (TCP)
-    memset(&hints, 0, sizeof(hints));
+    memset(&hints, '\0', sizeof(hints));
     hints.ai_family = AF_INET;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
@@ -88,54 +92,158 @@ void listenSocket(int sockfd) {
 }
 
 
-//// This section contains struct addrinfo and methods for ongoing file transfer sessions
+//// This section contains struct addrinfo and methods for 2nd data socket setup and connection
+// struct to hold information to setup data port connection
+struct addrinfo* createDataAddress(char* client_address, char* port) {
+
+    struct addrinfo hints;
+    struct addrinfo *clientinfo;
+    int addr_status;
+
+    // setup information on type of connection (TCP)
+    memset(&hints, '\0', sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+
+    // check to make sure it's successful
+    if ((addr_status = getaddrinfo(client_address, port, &hints, &clientinfo)) != 0) {
+        fprintf(stderr, "Error setting up data info.\n"
+                        "Data port setup error: %s\n", gai_strerror(addr_status));
+        exit(1);
+    }
+
+    return clientinfo;
+}
 
 // establish connection with client to send data
-void connectSocket(int sockfd, struct addrinfo* servinfo) {
-
+int connectSocket(int sockfd, struct addrinfo* servinfo) {
     int connect_status;
 
     // connect socket and error check
     if ((connect_status = connect(sockfd, servinfo->ai_addr, servinfo->ai_addrlen)) == -1) {
-        fprintf(stderr, "Error connecting socket to server port.\n");
-        exit(1);
+        fprintf(stderr, "Error connecting socket to data port for data connection.\n");
+        return -1;
     }
+
+    return 1;
 }
 
+
+//// This section contains methods related to processing requset and sending correct data back
+// counts the number of files currently in the directory
+int getDirectoryCount() {
+    int count = 0;
+    struct dirent* de;
+    DIR *dr = opendir(".");
+
+    if (dr == NULL) {
+        fprintf(stderr, "Error opening current directory.\n");
+        return -1;
+    }
+
+    while ((de = readdir(dr)) != NULL)
+        count++;
+    closedir(dr);
+
+    return count;
+}
+
+// processes directory information and sends to client
+void sendDirectoryInfo(int data_socket) {
+    // get name of current working directory
+    char cur_dir[PATH_MAX];
+    if (getcwd(cur_dir, sizeof(cur_dir)) == NULL) {
+        fprintf(stderr, "Error attempting to get current directory name.\n");
+        return;
+    }
+
+    // get the number of files in current directory
+    int files_num = getDirectoryCount();
+    if (files_num == -1) {
+        fprintf(stderr, "Could not get directory count for %s.\n", cur_dir);
+    }
+
+    // send current count I guess...
+    char message[500];
+    memset(message, '\0', sizeof(message));
+    strcpy(message, "Current directory is: ");
+    strcat(message, cur_dir);
+    strcat(message, ". The number of files in here is: ");
+    char str[5];
+    memset(str, '\0', sizeof(str));
+    sprintf(str, "%d", files_num);
+    strcat(message, str);
+    send(data_socket, message, strlen(message), 0);
+
+}
 
 // handles client-server interactions using helper methods
 void interactWithClient(int client_fd) {
 
-    // setup strings for storage
-    char data_port[50];
+    // validator messages
+    char* valid = "1";
+    char* invalid ="-1";
+    char* bad_command = "Command not valid. Only -g, -l allowed\n.";
 
-    memset(data_port, 0, sizeof(data_port));
+    // receive and validate command. If invalid command, return prematurely
+    char command[5];
+    memset(command, '\0', sizeof(command));
+    recv(client_fd, command, sizeof(command)-1, 0);
+
+    if (strcmp(command, "-g") != 0 && strcmp(command, "-l") != 0) {
+        send(client_fd, bad_command, strlen(bad_command), 0);
+        printf("Closing connection to client.\n");
+        return;
+    }
+    else {
+        send(client_fd, valid, strlen(valid), 0);
+    }
+
+    // receive data port. no need to validate as client already validates correct data port
+    char data_port[10];
+    memset(data_port, '\0', sizeof(data_port));
     recv(client_fd, data_port, sizeof(data_port)-1, 0);
+    send(client_fd, valid, strlen(valid), 0);
 
-    printf("%s\n\n", data_port);
+    // receive client address, which is needed to establish data connection later
+    char client_address[100];
+    memset(client_address, '\0', sizeof(client_address));
+    recv(client_fd, client_address, sizeof(client_address)-1, 0);
+    send(client_fd, valid, strlen(valid), 0);
+
+    // receive file name if -g
+    char file_name[256];
+    memset(file_name, '\0', sizeof(file_name));
+    if (strcmp(command, "-g") == 0) {
+        recv(client_fd, file_name, sizeof(file_name)-1, 0);
+        send(client_fd, valid, strlen(valid), 0);
+    }
+    else {
+        file_name[0] = '-'; // simple checker for debugging purposes
+    }
+
+    printf("Client Data: %s %s %s %s\n", command, data_port, client_address, file_name);
+
+    // at this point: all data needed to process has passed in. Setup data connection
+    sleep(3); // added this to let client setup the connection first
+    struct addrinfo* clientinfo = createDataAddress(client_address, data_port);
+    int data_socket = createSocket(clientinfo);
+    if (connectSocket(data_socket, clientinfo) == -1) {
+        close(data_socket);
+        freeaddrinfo(clientinfo);
+        return;
+    }
+
+    // process particular given command
+    if (strcmp(command, "-l") == 0) {
+        printf("Client requests current directory information. Processing...\n");
+        sendDirectoryInfo(data_socket);
+    }
 
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    close(data_socket);
+    freeaddrinfo(clientinfo);
 }
 
 // takes in client socket, input user handle and empty serverName array (which gets what server sends)
@@ -159,11 +267,13 @@ void session(int sockfd) {
         }
 
         // connection successful - use incoming_fd to interact with client
+        printf("Client requested connection. Connection established successfully.\n");
         interactWithClient(incoming_fd);
 
         // close connection with client once interaction is finished; loop to accept more incoming
         close(incoming_fd);
         printf("Connection with client closed.\n");
+        printf("Continueing to accept incoming connections...\n");
     }
 }
 
