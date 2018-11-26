@@ -90,13 +90,13 @@ def session(client_socket, command, data_port, filename):
     # at this point: command and data passed in. based on -l or -g, be prepared to get results accordingly
     # setup parallel socket on data port for data transmission
     data_socket = connect_data_socket(data_port)
-    print "Server initiated connection on data port. Connection established."
+    print "Server initiated connection on data port. Connection established.\n"
 
     # depending on command, use appropriate way to retrieve data
     if command == "-l":
         # keep receiving and printing out results until 'end transmission' is sent from server
         message = data_socket.recv(256)
-        while message != "end transmission":
+        while message != "__end_transmission__":
             print message
             message = data_socket.recv(256)
     elif command == "-g":
@@ -104,12 +104,22 @@ def session(client_socket, command, data_port, filename):
         message = data_socket.recv(100)
         print message
 
+        # after initial message, only continue receiving the file if it's the right signal
         if message == "File found. Server sending over file.":
-            print "Found file cool."
+            # create and write new file in current dir
+            file = open(filename, "w")
 
+            # continuously receive sent file buffer content until end transmission
+            buffer = data_socket.recv(1000)
 
+            while "__end_transmission__" not in buffer:
+                # remove any trailing null terminators left in buffer that server sends
+                buffer = buffer.rstrip("\0")
+                file.write(buffer)
+                buffer = data_socket.recv(1000)
 
-
+            file.close()
+            print "File sent.\n"
 
     data_socket.close()
     client_socket.close()

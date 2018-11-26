@@ -11,6 +11,7 @@ http://beej.us/guide/bgnet/
 https://stackoverflow.com/questions/16010622/reasoning-behind-c-sockets-sockaddr-and-sockaddr-storage
 https://www.geeksforgeeks.org/c-program-list-files-sub-directories-directory/
 https://stackoverflow.com/questions/298510/how-to-get-the-current-directory-in-a-c-program
+ftp://gaia.cs.umass.edu/pub/kurose/ftpclient.c
 this is my CS344 project on sockets: https://github.com/gdavge2003/operating-systems-projects/tree/master/encryptor-decryptor
 '''
 */
@@ -91,7 +92,7 @@ void listenSocket(int sockfd) {
 
 
 //// This section contains struct addrinfo and methods for 2nd data socket setup and connection
-// struct to hold information to setup data port connection
+// struct to store information to setup data port connection
 struct addrinfo* createDataAddress(char* client_address, char* port) {
     struct addrinfo hints;
     struct addrinfo *clientinfo;
@@ -145,7 +146,7 @@ int getDirectoryCount() {
     return count;
 }
 
-// create string array to hold file names
+// create string array to store file names
 char** createStringArray(int size) {
     char** array = malloc(size * sizeof(char*));
 
@@ -158,7 +159,7 @@ char** createStringArray(int size) {
     return array;
 }
 
-// clear memory of string array used to hold file names
+// clear memory of string array used to store file names
 void deleteStringArray(char** array, int size) {
     int i;
     for (i = 0; i < size; i++) {
@@ -208,12 +209,14 @@ void sendFile(int data_socket, char* file_name) {
     char* not_found_message = "File not found.";
     char* error_message = "Error occurred. Failed file retrieval.";
     char* found_message = "File found. Server sending over file.";
+    char* error_file_message = "Error during file transfer.";
+    char* end = "__end_transmission__";
 
     // get name of current working directory
     char cur_dir[PATH_MAX];
     if (getcwd(cur_dir, sizeof(cur_dir)) == NULL) {
         fprintf(stderr, "Error attempting to get current directory name.\n");
-        send(data_socket, error_message, strlen(not_found_message), 0);
+        send(data_socket, error_message, strlen(error_message), 0);
         return;
     }
 
@@ -221,7 +224,7 @@ void sendFile(int data_socket, char* file_name) {
     int files_num = getDirectoryCount();
     if (files_num == -1) {
         fprintf(stderr, "Could not get directory count for %s.\n", cur_dir);
-        send(data_socket, error_message, strlen(not_found_message), 0);
+        send(data_socket, error_message, strlen(error_message), 0);
         return;
     }
     if (files_num == 0) {
@@ -235,7 +238,7 @@ void sendFile(int data_socket, char* file_name) {
     int res = getDirectoryContents(file_names);
     if (res == -1) {
         fprintf(stderr, "Error retrieving file names for directory: %s.\n", cur_dir);
-        send(data_socket, error_message, strlen(not_found_message), 0);
+        send(data_socket, error_message, strlen(error_message), 0);
         deleteStringArray(file_names, files_num);
         return;
     }
@@ -247,14 +250,49 @@ void sendFile(int data_socket, char* file_name) {
         return;
     }
 
-    // found file - send over contents
+    // found file - send initial message
     send(data_socket, found_message, strlen(found_message), 0);
 
+    // open file, send content by buffer size, then send end message
+    char buffer[1000];
+    memset(buffer, '\0', sizeof(buffer));
 
+    int fd = open(file_name, O_RDONLY);
+    while (1) {
+        // get size of the file and put content into buffer
+        int bytes = read(fd, buffer, sizeof(buffer)-1);
+        if (bytes == 0)
+            break;
 
+        if (bytes < 0) {
+            fprintf(stderr, "Error, unable to read file content.\n");
+            send(data_socket, error_file_message, strlen(error_file_message), 0);
+            break;
+        }
 
+        // send the buffer content to client while the buffer has data
+        void* byte_ptr = buffer;
+        while (bytes > 0) {
+            int bytes_written = send(data_socket, byte_ptr, sizeof(buffer),0);
+            if (bytes_written < 0) {
+                fprintf(stderr, "Error sending file buffer content to client.\n");
+                send(data_socket, error_file_message, strlen(error_file_message), 0);
+                break;
+            }
+
+            bytes -= bytes_written;
+            byte_ptr += bytes_written;
+        }
+
+        // clear out buffer for reuse in next iteration
+        memset(buffer, '\0', sizeof(buffer));
+    }
+
+    // send signal for transfer completion to end
+    send(data_socket, end, strlen(end), 0);
 
     // cleanup
+    close(fd);
     deleteStringArray(file_names, files_num);
 }
 
@@ -303,7 +341,7 @@ void sendDirectoryInfo(int data_socket) {
     }
 
     // send an expected keyword to indicate end of transmission
-    char* end = "end transmission";
+    char* end = "__end_transmission__";
     send(data_socket, end, strlen(end), 0);
 
     // cleanup
