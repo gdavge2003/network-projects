@@ -37,7 +37,6 @@ this is my CS344 project on sockets: https://github.com/gdavge2003/operating-sys
 //// This section contains struct addrinfo and methods to establish an initial connection
 // method returns an addrinfo which has information for this server, which socket will use later
 struct addrinfo* createAddress(char* port) {
-
     struct addrinfo hints;
     struct addrinfo *servinfo;
     int addr_status;
@@ -60,7 +59,6 @@ struct addrinfo* createAddress(char* port) {
 
 // create socket for given addr info
 int createSocket(struct addrinfo* servinfo) {
-
     int sockfd;
 
     // setup socket descriptor with server info and error check
@@ -74,7 +72,6 @@ int createSocket(struct addrinfo* servinfo) {
 
 // bind functioning socket to given port on server
 void bindSocket(int sockfd, struct addrinfo* servinfo) {
-
     if (bind(sockfd, servinfo->ai_addr, servinfo->ai_addrlen) == -1) {
         close(sockfd);
         fprintf(stderr, "Error binding socket to given port on this server.\n");
@@ -96,7 +93,6 @@ void listenSocket(int sockfd) {
 //// This section contains struct addrinfo and methods for 2nd data socket setup and connection
 // struct to hold information to setup data port connection
 struct addrinfo* createDataAddress(char* client_address, char* port) {
-
     struct addrinfo hints;
     struct addrinfo *clientinfo;
     int addr_status;
@@ -153,7 +149,8 @@ int getDirectoryCount() {
 char** createStringArray(int size) {
     char** array = malloc(size * sizeof(char*));
 
-    for (int i  = 0; i < size; i++){
+    int i;
+    for (i = 0; i < size; i++){
         array[i] = malloc(256 * sizeof(char));
         memset(array[i], '\0', 256);
     }
@@ -163,7 +160,8 @@ char** createStringArray(int size) {
 
 // clear memory of string array used to hold file names
 void deleteStringArray(char** array, int size) {
-    for (int i = 0; i < size; i++) {
+    int i;
+    for (i = 0; i < size; i++) {
         free(array[i]);
     }
 
@@ -193,6 +191,73 @@ int getDirectoryContents(char** array) {
     return 1;
 }
 
+// returns boolean if requested file name matches one of directory contents
+int findFile(char** file_names, int count, char* file_name) {
+    int i;
+    for (i = 0; i < count; i++) {
+        if (strcmp(file_names[i], file_name) == 0) {
+            return 1;
+        }
+    }
+
+    return 0;
+}
+
+// processes sent file
+void sendFile(int data_socket, char* file_name) {
+    char* not_found_message = "File not found.";
+    char* error_message = "Error occurred. Failed file retrieval.";
+    char* found_message = "File found. Server sending over file.";
+
+    // get name of current working directory
+    char cur_dir[PATH_MAX];
+    if (getcwd(cur_dir, sizeof(cur_dir)) == NULL) {
+        fprintf(stderr, "Error attempting to get current directory name.\n");
+        send(data_socket, error_message, strlen(not_found_message), 0);
+        return;
+    }
+
+    // get file count and if it's empty, then just return not found
+    int files_num = getDirectoryCount();
+    if (files_num == -1) {
+        fprintf(stderr, "Could not get directory count for %s.\n", cur_dir);
+        send(data_socket, error_message, strlen(not_found_message), 0);
+        return;
+    }
+    if (files_num == 0) {
+        send(data_socket, not_found_message, strlen(not_found_message), 0);
+        return;
+    }
+
+    // do a search and if not found, then return not found
+    char** file_names;
+    file_names = createStringArray(files_num);
+    int res = getDirectoryContents(file_names);
+    if (res == -1) {
+        fprintf(stderr, "Error retrieving file names for directory: %s.\n", cur_dir);
+        send(data_socket, error_message, strlen(not_found_message), 0);
+        deleteStringArray(file_names, files_num);
+        return;
+    }
+
+    int isFound = findFile(file_names, files_num, file_name);
+    if (!isFound) {
+        send(data_socket, not_found_message, strlen(not_found_message), 0);
+        deleteStringArray(file_names, files_num);
+        return;
+    }
+
+    // found file - send over contents
+    send(data_socket, found_message, strlen(found_message), 0);
+
+
+
+
+
+    // cleanup
+    deleteStringArray(file_names, files_num);
+}
+
 // processes directory information and sends to client
 void sendDirectoryInfo(int data_socket) {
     // get name of current working directory
@@ -206,6 +271,7 @@ void sendDirectoryInfo(int data_socket) {
     int files_num = getDirectoryCount();
     if (files_num == -1) {
         fprintf(stderr, "Could not get directory count for %s.\n", cur_dir);
+        return;
     }
 
     // get array of file names in current directory
@@ -214,7 +280,7 @@ void sendDirectoryInfo(int data_socket) {
     memset(message, '\0', sizeof(message));
     strcpy(message, "Current directory is: ");
     strcat(message, cur_dir);
-    strcat(message, ". The files in the directory are:\n");
+    strcat(message, ". The files in the directory are:");
     send(data_socket, message, strlen(message), 0);
 
     // if there are actually files in the directory, send them along. Otherwise just mention empty dir
@@ -225,12 +291,14 @@ void sendDirectoryInfo(int data_socket) {
             fprintf(stderr, "Error retrieving file names for directory: %s.\n", cur_dir);
         }
 
-        for (int i = 0; i < files_num; i++) {
+        int i;
+        for (i = 0; i < files_num; i++) {
+            // strcat(file_names[i], "\n");
             send(data_socket, file_names[i], 256, 0);
         }
     }
     else {
-        char* empty_dir = "[empty]\n";
+        char* empty_dir = "[empty]";
         send(data_socket, empty_dir, strlen(empty_dir), 0);
     }
 
@@ -246,7 +314,6 @@ void sendDirectoryInfo(int data_socket) {
 
 // handles client-server interactions using helper methods
 void interactWithClient(int client_fd) {
-
     // validator messages
     char* valid = "1";
     char* invalid ="-1";
@@ -306,23 +373,24 @@ void interactWithClient(int client_fd) {
         printf("Client requests current directory information. Processing...\n");
         sendDirectoryInfo(data_socket);
     }
+    else if (strcmp(command, "-g") == 0) {
+        printf("Client requests file '%s'. Processing...\n", file_name);
+        sendFile(data_socket, file_name);
+    }
 
-
-
+    printf("Process completed.\n");
     close(data_socket);
     freeaddrinfo(clientinfo);
 }
 
 // takes in client socket, input user handle and empty serverName array (which gets what server sends)
 void session(int sockfd) {
-
     printf("Server established. Now accepting incoming connections...\n");
 
     // setup variables to store incoming connection data
     struct sockaddr_storage client_addr;
     socklen_t addr_size;
     int incoming_fd;
-
 
     while (1) {
         addr_size = sizeof(client_addr);

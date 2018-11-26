@@ -36,7 +36,7 @@ def connect_to_server(server, port):
     c_socket = socket(AF_INET, SOCK_STREAM)
     c_socket.connect((server, int(port)))
 
-    print 'Connected to server successfully.\n'
+    print 'Connected to server successfully.'
     return c_socket
 
 
@@ -90,11 +90,22 @@ def session(client_socket, command, data_port, filename):
     # at this point: command and data passed in. based on -l or -g, be prepared to get results accordingly
     # setup parallel socket on data port for data transmission
     data_socket = connect_data_socket(data_port)
-    print "Server initiated connection on data port. Connection established.\n"
+    print "Server initiated connection on data port. Connection established."
 
     # depending on command, use appropriate way to retrieve data
     if command == "-l":
-        # get all the messages until 'end of transmission'
+        # keep receiving and printing out results until 'end transmission' is sent from server
+        message = data_socket.recv(256)
+        while message != "end transmission":
+            print message
+            message = data_socket.recv(256)
+    elif command == "-g":
+        # get first message: no files in dir, file found, or file not found
+        message = data_socket.recv(100)
+        print message
+
+        if message == "File found. Server sending over file.":
+            print "Found file cool."
 
 
 
