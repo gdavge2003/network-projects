@@ -29,6 +29,7 @@ this is my CS344 project on sockets: https://github.com/gdavge2003/operating-sys
 #include <fcntl.h>
 #include <unistd.h>
 #include <dirent.h>
+#include <limits.h>
 
 #define MAX_MSG_LENGTH	500
 
@@ -148,6 +149,50 @@ int getDirectoryCount() {
     return count;
 }
 
+// create string array to hold file names
+char** createStringArray(int size) {
+    char** array = malloc(size * sizeof(char*));
+
+    for (int i  = 0; i < size; i++){
+        array[i] = malloc(256 * sizeof(char));
+        memset(array[i], '\0', 256);
+    }
+
+    return array;
+}
+
+// clear memory of string array used to hold file names
+void deleteStringArray(char** array, int size) {
+    for (int i = 0; i < size; i++) {
+        free(array[i]);
+    }
+
+    free(array);
+}
+
+// takes in empty array, and fills file names of current directory with it
+int getDirectoryContents(char** array) {
+    struct dirent* de;
+    DIR *dr = opendir(".");
+    int i = 0;
+
+    if (dr == NULL) {
+        fprintf(stderr, "Error opening current directory.\n");
+        return -1;
+    }
+
+    while ((de = readdir(dr)) != NULL) {
+        if (de->d_type == DT_REG) {
+            strcpy(array[i], de->d_name);
+            i++;
+        }
+    }
+
+    closedir(dr);
+
+    return 1;
+}
+
 // processes directory information and sends to client
 void sendDirectoryInfo(int data_socket) {
     // get name of current working directory
@@ -163,18 +208,40 @@ void sendDirectoryInfo(int data_socket) {
         fprintf(stderr, "Could not get directory count for %s.\n", cur_dir);
     }
 
-    // send current count I guess...
+    // get array of file names in current directory
+    char** file_names;
     char message[500];
     memset(message, '\0', sizeof(message));
     strcpy(message, "Current directory is: ");
     strcat(message, cur_dir);
-    strcat(message, ". The number of files in here is: ");
-    char str[5];
-    memset(str, '\0', sizeof(str));
-    sprintf(str, "%d", files_num);
-    strcat(message, str);
+    strcat(message, ". The files in the directory are:\n");
     send(data_socket, message, strlen(message), 0);
 
+    // if there are actually files in the directory, send them along. Otherwise just mention empty dir
+    if (files_num > 0) {
+        file_names = createStringArray(files_num);
+        int res = getDirectoryContents(file_names);
+        if (res == -1) {
+            fprintf(stderr, "Error retrieving file names for directory: %s.\n", cur_dir);
+        }
+
+        for (int i = 0; i < files_num; i++) {
+            send(data_socket, file_names[i], 256, 0);
+        }
+    }
+    else {
+        char* empty_dir = "[empty]\n";
+        send(data_socket, empty_dir, strlen(empty_dir), 0);
+    }
+
+    // send an expected keyword to indicate end of transmission
+    char* end = "end transmission";
+    send(data_socket, end, strlen(end), 0);
+
+    // cleanup
+    if (files_num > 0) {
+        deleteStringArray(file_names, files_num);
+    }
 }
 
 // handles client-server interactions using helper methods
@@ -225,7 +292,7 @@ void interactWithClient(int client_fd) {
     printf("Client Data: %s %s %s %s\n", command, data_port, client_address, file_name);
 
     // at this point: all data needed to process has passed in. Setup data connection
-    sleep(3); // added this to let client setup the connection first
+    sleep(3); // waits for client to successfully setup the listening socket before initiating
     struct addrinfo* clientinfo = createDataAddress(client_address, data_port);
     int data_socket = createSocket(clientinfo);
     if (connectSocket(data_socket, clientinfo) == -1) {

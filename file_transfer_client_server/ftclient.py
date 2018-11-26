@@ -39,6 +39,7 @@ def connect_to_server(server, port):
     print 'Connected to server successfully.\n'
     return c_socket
 
+
 # setup data socket for data transmission
 def connect_data_socket(port):
     s_socket = socket(AF_INET, SOCK_STREAM)
@@ -48,6 +49,7 @@ def connect_data_socket(port):
 
     return d_socket
 
+
 # get source address to send to server (see reference)
 def get_source_address():
     source = socket(AF_INET, SOCK_DGRAM)  # Easy way to get IP address
@@ -55,6 +57,7 @@ def get_source_address():
     address = source.getsockname()[0]
     source.close()
     return address
+
 
 # primary method to handle session
 def session(client_socket, command, data_port, filename):
@@ -87,11 +90,12 @@ def session(client_socket, command, data_port, filename):
     # at this point: command and data passed in. based on -l or -g, be prepared to get results accordingly
     # setup parallel socket on data port for data transmission
     data_socket = connect_data_socket(data_port)
+    print "Server initiated connection on data port. Connection established.\n"
 
     # depending on command, use appropriate way to retrieve data
     if command == "-l":
-        filename = data_socket.recv(500)
-        print filename
+        # get all the messages until 'end of transmission'
+
 
 
 
